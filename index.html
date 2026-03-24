@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bier-Vogel</title>
+<title>Zähler 1 bis 3</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: sans-serif; background: #0a0a1a; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
@@ -83,6 +83,90 @@ const ctx = canvas.getContext('2d');
 function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 resize();
 window.addEventListener('resize', resize);
+
+/* ── Audio ── */
+let audioCtx = null;
+function getAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// Chirp: short sweet bird tweet
+let chirpTimer = 0;
+const CHIRP_INTERVAL = 1800;
+function playChirp() {
+  try {
+    const ac = getAudio();
+    const t = ac.currentTime;
+    // Two-note tweet: high then slightly lower
+    const notes = [
+      { freq: 2800, start: 0,    dur: 0.06 },
+      { freq: 3200, start: 0.07, dur: 0.05 },
+      { freq: 2600, start: 0.13, dur: 0.08 },
+    ];
+    notes.forEach(n => {
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(n.freq, t + n.start);
+      osc.frequency.exponentialRampToValueAtTime(n.freq * 1.15, t + n.start + n.dur * 0.4);
+      osc.frequency.exponentialRampToValueAtTime(n.freq * 0.85, t + n.start + n.dur);
+      gain.gain.setValueAtTime(0, t + n.start);
+      gain.gain.linearRampToValueAtTime(0.13, t + n.start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + n.start + n.dur);
+      osc.start(t + n.start);
+      osc.stop(t + n.start + n.dur + 0.01);
+    });
+  } catch(e) {}
+}
+
+// "Es gibt kein Bier auf Hawaii" — melody notes (simplified)
+// C D E G A pattern loosely matching the tune
+// "Trink Brüderchen trink" - kurze Version
+const HAWAII_NOTES = [
+  392.0, 392.0, 440.0, 392.0, 349.2, 392.0,
+  440.0, 440.0, 392.0, 349.2, 261.6
+];
+let hawaiiNode = null;
+let hawaiiPlaying = false;
+function startHawaii() {
+  if (hawaiiPlaying) return;
+  hawaiiPlaying = true;
+  try {
+    const ac = getAudio();
+    let t = ac.currentTime + 0.05;
+    const noteDur = 0.22;
+    HAWAII_NOTES.forEach((freq, i) => {
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      // slight vibrato via second osc
+      const vib = ac.createOscillator();
+      const vibGain = ac.createGain();
+      vib.frequency.value = 5;
+      vibGain.gain.value = 8;
+      vib.connect(vibGain); vibGain.connect(osc.frequency);
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.18, t + 0.04);
+      gain.gain.setValueAtTime(0.18, t + noteDur - 0.06);
+      gain.gain.linearRampToValueAtTime(0, t + noteDur);
+      vib.start(t); vib.stop(t + noteDur);
+      osc.start(t); osc.stop(t + noteDur);
+      t += noteDur;
+    });
+    // loop: schedule restart after melody ends
+    const totalDur = HAWAII_NOTES.length * noteDur * 1000;
+    hawaiiNode = setTimeout(() => { hawaiiPlaying = false; if (birdIsDrunk()) startHawaii(); }, totalDur + 200);
+  } catch(e) { hawaiiPlaying = false; }
+}
+function stopHawaii() {
+  hawaiiPlaying = false;
+  if (hawaiiNode) { clearTimeout(hawaiiNode); hawaiiNode = null; }
+}
+function birdIsDrunk() { return bird.state === S_DRUNK; }
 
 /* ── Draw Kingfisher ── */
 function drawBird(cx, cy, wingPhase, drinkTilt, drunkTilt, drunkWobble, isColorful) {
@@ -316,6 +400,8 @@ function animate(ts) {
     bird.x += bird.speed*speedMult*(dt/16);
     bird.phase += dt*0.006;
     bird.bobTime += dt*0.002;
+    chirpTimer += dt;
+    if (chirpTimer > CHIRP_INTERVAL) { chirpTimer = 0; playChirp(); }
     if (bird.x > midX-30 && bird.x < midX+30) {
       bird.state = S_DRINK_APPEAR;
       bird.stateTimer = 0;
@@ -346,6 +432,8 @@ function animate(ts) {
         bird.stateTimer = 0;
         bird.drunkWobble = 1.0;
         spawnDrunkStars(bird.x, bird.y-30);
+        chirpTimer = 0;
+        startHawaii();
       } else {
         bird.state = S_THROW;
         bird.stateTimer = 0;
@@ -356,6 +444,8 @@ function animate(ts) {
     bird.x += bird.speed*speedMult*(dt/16);
     bird.phase += dt*0.006;
     bird.bobTime += dt*0.002;
+    chirpTimer += dt;
+    if (chirpTimer > CHIRP_INTERVAL) { chirpTimer = 0; playChirp(); }
     bird.glass.vy += 0.35*(dt/16);
     bird.glass.x += bird.glass.vx*(dt/16);
     bird.glass.y += bird.glass.vy*(dt/16);
@@ -385,6 +475,7 @@ function animate(ts) {
       bird.state = S_LOOP;
       bird.stateTimer = 0;
       bird.drunkAngle = 0;
+      stopHawaii();
       const loopR = 140;
       bird.loopCx = bird.x;
       bird.loopCy = bird.y - loopR;
@@ -459,7 +550,7 @@ function animate(ts) {
 
   // Speech bubble when drunk
   if (bird.state === S_DRUNK) {
-    const hiccupTexts = ['Hiiick!','*hicks*','Prost!!','🍺🍺🍺','Waaah!'];
+    const hiccupTexts = ['Trink!','Brüderchen!','Trink! 🍺','*hicks*','Prost!! 🍺🍺'];
     const idx = Math.floor(bird.stateTimer/400) % hiccupTexts.length;
     const bx2 = birdDrawX, by2 = birdDrawY;
     ctx.save();
